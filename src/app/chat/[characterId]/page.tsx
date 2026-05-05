@@ -3,10 +3,11 @@ import { db } from '@/db';
 import { characters, userProfiles } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { ChatPage } from '@/components/chat-page';
 
 export default async function ChatRoute({ params }: { params: { characterId: string } }) {
-  const session = await auth.api.getSession();
+  const session = await auth.api.getSession({ headers: headers() });
 
   if (!session || !session.user) {
     redirect('/login');

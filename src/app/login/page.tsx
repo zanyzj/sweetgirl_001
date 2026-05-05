@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 
 export default function LoginPage() {
   const handleLogin = async () => {
-    await signIn.social({ provider: 'google', callbackURL: '/characters' });
+    await signIn.social({ provider: 'google', callbackURL: '/' });
   };
 
   return (

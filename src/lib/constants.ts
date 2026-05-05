@@ -1,9 +1,9 @@
 import { OpenAI } from 'openai';
 
-export const deepseek = new OpenAI({
+export const deepseek = process.env.DEEPSEEK_API_KEY ? new OpenAI({
   baseURL: 'https://api.deepseek.com/v1',
   apiKey: process.env.DEEPSEEK_API_KEY,
-});
+}) : null;
 
 export const STAGES = {
   stranger: { min: 0, max: 20, name: '陌生' },

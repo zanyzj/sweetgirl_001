@@ -136,6 +136,10 @@ export async function POST(request: NextRequest) {
     })
     .where(eq(userCharacterRelations.id, relation.id));
 
+  if (!deepseek) {
+    return NextResponse.json({ error: 'AI service not configured' }, { status: 500 });
+  }
+
   const stream = await deepseek.chat.completions.create({
     model: 'deepseek-chat',
     messages: [{ role: 'user', content: fullPrompt }],
@@ -195,6 +199,8 @@ async function saveAssistantMessage(
 }
 
 async function extractProfileInfo(userId: string, content: string) {
+  if (!deepseek) return;
+
   const extractPrompt = `从以下用户消息中提取个人信息(生日、爱好、职业、喜欢的食物等)，以JSON格式返回。如果没提取到任何信息，返回空JSON {}。
 用户消息: ${content}
 

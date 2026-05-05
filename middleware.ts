@@ -19,7 +19,7 @@ export async function middleware(request: Request) {
   }
   
   if (isLoginPage && session?.user) {
-    return NextResponse.redirect(new URL("/characters", request.url));
+    return NextResponse.redirect(new URL("/", request.url));
   }
   
   return NextResponse.next();

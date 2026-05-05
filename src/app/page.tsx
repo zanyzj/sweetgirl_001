@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { db } from '@/db';
 import { characters, userProfiles } from '@/db/schema';
 import { CharacterCard } from '@/components/character-card';
@@ -8,7 +9,7 @@ import { eq } from 'drizzle-orm';
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  const session = await auth.api.getSession();
+  const session = await auth.api.getSession({ headers: headers() });
 
   if (!session || !session.user) {
     redirect('/login');
