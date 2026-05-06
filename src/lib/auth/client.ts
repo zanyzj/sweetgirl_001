@@ -5,5 +5,5 @@ export const {
   signOut, 
   useSession, 
 } = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_APP_URL || window.location.origin,
+  baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
 });
