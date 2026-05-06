@@ -31,11 +31,12 @@ export const IMAGE_PROBABILITY: Record<Stage, number> = {
   stranger: 0,
   acquaintance: 0.05,
   friend: 0.15,
-  intimate: 0.30,
-  lover: 0.40,
+  intimate: 1.0,  // 临时设为100%测试
+  lover: 1.0,     // 临时设为100%测试
 };
 
 export const MAX_DAILY_IMAGES = 3;
+export const MAX_DAILY_IMAGES_PER_CHARACTER = 3;
 export const MAX_DAILY_ADDITION = 50;
 export const MAX_DAILY_DEDUCTION = 30;
 

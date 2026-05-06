@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Character, Message } from '@/db/schema';
 import { getStageName, getStageFromAffection } from '@/lib/constants';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Send, ArrowLeft, Image as ImageIcon } from 'lucide-react';
+import { Send, ArrowLeft, Image as ImageIcon, Camera } from 'lucide-react';
 import Link from 'next/link';
+
+interface ExtendedMessage extends Message {
+  isGeneratingImage?: boolean;
+  isLocal?: boolean;
+}
 
 interface ChatPageProps {
   character: Character;
@@ -14,12 +19,13 @@ interface ChatPageProps {
 }
 
 export function ChatPage({ character, userId }: ChatPageProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ExtendedMessage[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isTextStreaming, setIsTextStreaming] = useState(false);
   const [affection, setAffection] = useState(10);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     loadMessages();
@@ -30,7 +36,24 @@ export function ChatPage({ character, userId }: ChatPageProps) {
     const res = await fetch(`/api/messages?characterId=${character.id}`);
     if (res.ok) {
       const data = await res.json();
-      setMessages(data);
+      setMessages(data.map((m: Message) => ({ ...m, isLocal: false })));
+      
+      await checkAndSendOpening(data);
+    }
+  };
+
+  const checkAndSendOpening = async (currentMessages: Message[]) => {
+    const res = await fetch('/api/opening/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, characterId: character.id, messageCount: currentMessages.length }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.shouldSend && data.message) {
+        setMessages((prev) => [...prev, { ...data.message, isLocal: false }]);
+      }
     }
   };
 
@@ -42,32 +65,57 @@ export function ChatPage({ character, userId }: ChatPageProps) {
     }
   };
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, scrollToBottom]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if (!input.trim() || isTextStreaming) return;
 
     const userMessage = input.trim();
     setInput('');
-    setLoading(true);
+    setIsTextStreaming(true);
 
+    // 取消之前的请求
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    const userMessageId = `local-${Date.now()}`;
+    const assistantMessageId = `local-${Date.now() + 1}`;
+
+    // 添加用户消息
     setMessages((prev) => [
       ...prev,
       {
-        id: Date.now().toString(),
+        id: userMessageId,
         userId,
         characterId: character.id,
         role: 'user',
         content: userMessage,
         createdAt: new Date(),
-      } as Message,
+        isLocal: true,
+      } as ExtendedMessage,
+    ]);
+
+    // 添加AI占位消息
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantMessageId,
+        userId,
+        characterId: character.id,
+        role: 'assistant',
+        content: '',
+        createdAt: new Date(),
+        isLocal: true,
+      } as ExtendedMessage,
     ]);
 
     try {
@@ -75,64 +123,107 @@ export function ChatPage({ character, userId }: ChatPageProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ characterId: character.id, content: userMessage }),
+        signal: abortControllerRef.current.signal,
       });
 
-      if (!res.ok) throw new Error('Failed to send message');
+      if (!res.ok) {
+        throw new Error('Failed to send message');
+      }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('No reader');
+      if (!reader) {
+        throw new Error('No reader');
+      }
 
       const decoder = new TextDecoder();
       let assistantMessage = '';
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          userId,
-          characterId: character.id,
-          role: 'assistant',
-          content: '',
-          createdAt: new Date(),
-        } as Message,
-      ]);
+      let generatingImageId: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
+        const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
+          if (!line.trim() || !line.startsWith('data: ')) continue;
+          
+          const data = line.slice(6).trim();
+          if (!data || data === '[DONE]') continue;
 
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === 'text') {
-                assistantMessage += parsed.text;
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const lastMsg = updated[updated.length - 1];
-                  if (lastMsg && lastMsg.role === 'assistant') {
-                    lastMsg.content = assistantMessage;
-                  }
-                  return updated;
-                });
-              }
-            } catch {}
+          try {
+            const parsed = JSON.parse(data);
+            console.log('[Chat] Received SSE event:', parsed.type, parsed);
+            
+            if (parsed.type === 'text' && parsed.text) {
+              assistantMessage += parsed.text;
+              setMessages((prev) => {
+                const updated = [...prev];
+                const msgIndex = updated.findIndex((m) => m.id === assistantMessageId);
+                if (msgIndex !== -1) {
+                  updated[msgIndex] = {
+                    ...updated[msgIndex],
+                    content: assistantMessage,
+                  };
+                }
+                return updated;
+              });
+            } else if (parsed.type === 'generating_image') {
+              console.log('[Chat] Adding generating image placeholder');
+              generatingImageId = `local-${Date.now()}-img`;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: generatingImageId,
+                  userId,
+                  characterId: character.id,
+                  role: 'assistant',
+                  content: '',
+                  isGeneratingImage: true,
+                  createdAt: new Date(),
+                  isLocal: true,
+                } as ExtendedMessage,
+              ]);
+            } else if (parsed.type === 'image' && parsed.url) {
+              console.log('[Chat] Image received:', parsed.url);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.isGeneratingImage
+                    ? {
+                        ...msg,
+                        isGeneratingImage: false,
+                        imageUrl: parsed.url,
+                      }
+                    : msg
+                )
+              );
+            } else if (parsed.type === 'image_failed') {
+              console.log('[Chat] Image generation failed, removing placeholder');
+              setMessages((prev) => prev.filter((msg) => !msg.isGeneratingImage));
+            } else if (parsed.type === 'done') {
+              console.log('[Chat] Stream done');
+              setIsTextStreaming(false);
+            }
+          } catch (err) {
+            console.error('[Chat] Failed to parse SSE data:', data, err);
           }
         }
       }
 
-      await loadMessages();
-      await loadRelation();
+      // 流结束后，延迟加载服务器消息以同步状态
+      setTimeout(() => {
+        loadMessages();
+        loadRelation();
+      }, 100);
     } catch (error) {
-      console.error(error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('[Chat] Request aborted');
+      } else {
+        console.error('[Chat] Error:', error);
+      }
     } finally {
-      setLoading(false);
+      setIsTextStreaming(false);
     }
   };
 
@@ -178,19 +269,27 @@ export function ChatPage({ character, userId }: ChatPageProps) {
                   : 'bg-zinc-800 text-white rounded-bl-md'
               }`}
             >
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              {message.content && (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              )}
+              {message.isGeneratingImage && (
+                <div className="flex items-center gap-2 mt-2">
+                  <Camera className="w-4 h-4 text-zinc-400 animate-spin" />
+                  <span className="text-sm text-zinc-400">{character.name}正在拍照...</span>
+                </div>
+              )}
               {message.imageUrl && (
                 <img
                   src={message.imageUrl}
                   alt="character sent"
-                  className="mt-2 rounded-lg max-w-full"
+                  className="mt-2 rounded-lg max-w-[250px] w-full"
                 />
               )}
             </div>
           </div>
         ))}
 
-        {loading && (
+        {isTextStreaming && (
           <div className="flex justify-start">
             <div className="bg-zinc-800 text-white rounded-2xl rounded-bl-md px-4 py-2">
               <div className="flex gap-1">
@@ -222,13 +321,13 @@ export function ChatPage({ character, userId }: ChatPageProps) {
             placeholder="发送消息..."
             className="flex-1 bg-zinc-800 border-zinc-700 text-white"
             maxLength={500}
-            disabled={loading}
+            disabled={isTextStreaming}
           />
           <Button
             type="submit"
             size="icon"
             className="bg-amber-400 text-zinc-900 hover:bg-amber-500 shrink-0"
-            disabled={loading || !input.trim()}
+            disabled={isTextStreaming || !input.trim()}
           >
             <Send className="w-5 h-5" />
           </Button>

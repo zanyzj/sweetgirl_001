@@ -22,16 +22,18 @@ export async function GET(request: NextRequest) {
     .limit(1);
 
   if (relation.length === 0) {
+    const now = new Date();
     const newRelation = {
       id: crypto.randomUUID(),
       userId,
       characterId,
       affection: 10,
       stage: 'stranger',
+      lastChatAt: now,
       consecutiveDays: 0,
       todayAddition: 0,
       todayDeduction: 0,
-      countersResetDate: new Date().toISOString().split('T')[0],
+      countersResetDate: now.toISOString().split('T')[0],
     };
     await db.insert(userCharacterRelations).values(newRelation);
     return NextResponse.json(newRelation);

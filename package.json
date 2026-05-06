@@ -10,9 +10,12 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx src/lib/db/seed.ts"
+    "db:seed": "tsx src/lib/db/seed.ts",
+    "test:r2": "tsx src/scripts/test-r2.ts",
+    "test:imagegen": "tsx src/scripts/test-image-gen.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1043.0",
     "@better-auth/drizzle-adapter": "^1.6.9",
     "@neondatabase/serverless": "^0.10.0",
     "@radix-ui/react-slot": "^1.1.0",
@@ -23,6 +26,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.38.0",
     "lucide-react": "^0.460.0",
+    "nanoid": "^5.1.11",
     "next": "^14.2.0",
     "openai": "^4.0.0",
     "react": "^18.3.0",

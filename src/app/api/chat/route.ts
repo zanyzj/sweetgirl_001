@@ -4,6 +4,8 @@ import { db } from '@/db';
 import { messages, characters, userCharacterRelations, userProfiles } from '@/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { deepseek, getStageName, getStageFromAffection } from '@/lib/constants';
+import { shouldSendImage } from '@/lib/ai/image-decision';
+import { pickImage } from '@/lib/ai/image-picker';
 
 interface ProfileInfo {
   nickname?: string;
@@ -159,12 +161,75 @@ export async function POST(request: NextRequest) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', text })}\n\n`));
           }
         }
+        
+        // 文本流完成后，先保存文本消息
+        const assistantMessageId = crypto.randomUUID();
+        await db.insert(messages).values({
+          id: assistantMessageId,
+          userId,
+          characterId,
+          relationId: relation.id,
+          role: 'assistant',
+          content: assistantContent,
+          affectionDelta: 2,
+          affectionAfter: currentAffection + 2,
+        });
+        
+        extractProfileInfo(userId, content).catch(console.error);
+        
+        console.log('[Chat Route] Text response saved, checking if should send image...');
+        
+        const shouldSend = await shouldSendImage({
+          characterId,
+          userId,
+          currentStage: stage,
+        });
+        
+        console.log('[Chat Route] shouldSendImage result:', shouldSend);
+        
+        if (shouldSend) {
+          console.log('[Chat Route] Sending generating_image event to client');
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'generating_image' })}\n\n`));
+          
+          try {
+            console.log('[Chat Route] Starting image generation...');
+            const imageUrl = await pickImage({ characterId });
+            console.log('[Chat Route] pickImage returned:', imageUrl ? 'URL received' : 'null');
+            
+            if (imageUrl) {
+              const imageMessageId = crypto.randomUUID();
+              await db.insert(messages).values({
+                id: imageMessageId,
+                userId,
+                characterId,
+                relationId: relation.id,
+                role: 'assistant',
+                content: '',
+                imageUrl,
+                isProactive: true,
+                affectionDelta: 0,
+                affectionAfter: currentAffection + 2,
+              });
+              
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'image', url: imageUrl })}\n\n`));
+              console.log('[Chat Route] Image sent via SSE:', imageUrl);
+            } else {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'image_failed' })}\n\n`));
+              console.log('[Chat Route] Image generation returned null');
+            }
+          } catch (imageError) {
+            console.error('[Chat Route] Image generation error:', imageError);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'image_failed' })}\n\n`));
+          }
+        } else {
+          console.log('[Chat Route] Image not triggered (probability or limit)');
+        }
+        
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
         controller.close();
-
-        saveAssistantMessage(userId, characterId, relation.id, assistantContent, currentAffection + 2).catch(console.error);
-        extractProfileInfo(userId, content).catch(console.error);
+        console.log('[Chat Route] Stream closed');
       } catch (error) {
+        console.error('[Chat Route] Stream error:', error);
         controller.error(error);
       }
     },
@@ -176,25 +241,6 @@ export async function POST(request: NextRequest) {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     },
-  });
-}
-
-async function saveAssistantMessage(
-  userId: string,
-  characterId: string,
-  relationId: string,
-  content: string,
-  newAffection: number
-) {
-  await db.insert(messages).values({
-    id: crypto.randomUUID(),
-    userId,
-    characterId,
-    relationId,
-    role: 'assistant',
-    content,
-    affectionDelta: 2,
-    affectionAfter: newAffection,
   });
 }
 
