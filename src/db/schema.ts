@@ -54,8 +54,21 @@ export const userProfiles = pgTable('user_profiles', {
   favoriteFood: text('favorite_food'),
   job: varchar('job', { length: 100 }),
   otherInfo: jsonb('other_info').default('{}'),
+  isPro: boolean('is_pro').default(false),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
+
+export const subscriptions = pgTable('subscriptions', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  customerId: text('customer_id').notNull(),
+  productId: text('product_id').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('active'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => ({
+  userIdIdx: uniqueIndex('subscription_user_idx').on(table.userId),
+}));
 
 export const charactersRelations = relations(characters, ({ many }) => ({
   userCharacterRelations: many(userCharacterRelations),
@@ -79,5 +92,7 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type NewUserProfile = typeof userProfiles.$inferInsert;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type NewSubscription = typeof subscriptions.$inferInsert;
 
 export * from './auth-schema';

@@ -3,7 +3,7 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { db } from "@/db";
 
 export const auth = betterAuth({
-  adapter: drizzleAdapter(db as any, {
+  database: drizzleAdapter(db as any, {
     provider: "pg",
   }),
   emailAndPassword: {
