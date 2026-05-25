@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Send, ArrowLeft, Image as ImageIcon, Camera } from 'lucide-react';
 import Link from 'next/link';
+import { ChatLimitWarning } from './chat-limit-warning';
 
 interface ExtendedMessage extends Message {
   isGeneratingImage?: boolean;
@@ -16,13 +17,21 @@ interface ExtendedMessage extends Message {
 interface ChatPageProps {
   character: Character;
   userId: string;
+  isPro: boolean;
 }
 
-export function ChatPage({ character, userId }: ChatPageProps) {
+const MESSAGE_LIMITS = {
+  guest: 3,
+  free: 7,
+  pro: Infinity,
+};
+
+export function ChatPage({ character, userId, isPro }: ChatPageProps) {
   const [messages, setMessages] = useState<ExtendedMessage[]>([]);
   const [input, setInput] = useState('');
   const [isTextStreaming, setIsTextStreaming] = useState(false);
   const [affection, setAffection] = useState(10);
+  const [remainingMessages, setRemainingMessages] = useState(MESSAGE_LIMITS.free);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -31,6 +40,17 @@ export function ChatPage({ character, userId }: ChatPageProps) {
     loadMessages();
     loadRelation();
   }, [character.id, userId]);
+
+  useEffect(() => {
+    updateRemainingMessages();
+  }, [messages, isPro]);
+
+  const updateRemainingMessages = () => {
+    const userMessages = messages.filter((m) => m.role === 'user' && !m.isLocal);
+    const limit = isPro ? MESSAGE_LIMITS.pro : MESSAGE_LIMITS.free;
+    const remaining = Math.max(0, limit - userMessages.length);
+    setRemainingMessages(remaining);
+  };
 
   const loadMessages = async () => {
     const res = await fetch(`/api/messages?characterId=${character.id}`);
@@ -77,11 +97,14 @@ export function ChatPage({ character, userId }: ChatPageProps) {
     e.preventDefault();
     if (!input.trim() || isTextStreaming) return;
 
+    if (!isPro && remainingMessages <= 0) {
+      return;
+    }
+
     const userMessage = input.trim();
     setInput('');
     setIsTextStreaming(true);
 
-    // 取消之前的请求
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -90,7 +113,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
     const userMessageId = `local-${Date.now()}`;
     const assistantMessageId = `local-${Date.now() + 1}`;
 
-    // 添加用户消息
     setMessages((prev) => [
       ...prev,
       {
@@ -104,7 +126,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
       } as ExtendedMessage,
     ]);
 
-    // 添加AI占位消息
     setMessages((prev) => [
       ...prev,
       {
@@ -154,7 +175,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
 
           try {
             const parsed = JSON.parse(data);
-            console.log('[Chat] Received SSE event:', parsed.type, parsed);
             
             if (parsed.type === 'text' && parsed.text) {
               assistantMessage += parsed.text;
@@ -170,7 +190,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
                 return updated;
               });
             } else if (parsed.type === 'generating_image') {
-              console.log('[Chat] Adding generating image placeholder');
               generatingImageId = `local-${Date.now()}-img`;
               setMessages((prev) => [
                 ...prev,
@@ -186,7 +205,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
                 } as ExtendedMessage,
               ]);
             } else if (parsed.type === 'image' && parsed.url) {
-              console.log('[Chat] Image received:', parsed.url);
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.isGeneratingImage
@@ -199,10 +217,8 @@ export function ChatPage({ character, userId }: ChatPageProps) {
                 )
               );
             } else if (parsed.type === 'image_failed') {
-              console.log('[Chat] Image generation failed, removing placeholder');
               setMessages((prev) => prev.filter((msg) => !msg.isGeneratingImage));
             } else if (parsed.type === 'done') {
-              console.log('[Chat] Stream done');
               setIsTextStreaming(false);
             }
           } catch (err) {
@@ -211,7 +227,6 @@ export function ChatPage({ character, userId }: ChatPageProps) {
         }
       }
 
-      // 流结束后，延迟加载服务器消息以同步状态
       setTimeout(() => {
         loadMessages();
         loadRelation();
@@ -250,58 +265,73 @@ export function ChatPage({ character, userId }: ChatPageProps) {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-            <p>开始和 {character.name} 聊天吧~</p>
+      <main className="flex-1 overflow-y-auto">
+        {!isPro && (
+          <div className="sticky top-0 z-10 bg-zinc-950/95 backdrop-blur-sm border-b border-zinc-800">
+            <ChatLimitWarning
+              userId={userId}
+              remainingMessages={remainingMessages}
+              isLoggedIn={true}
+            />
           </div>
         )}
 
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                message.role === 'user'
-                  ? 'bg-amber-400 text-zinc-900 rounded-br-md'
-                  : 'bg-zinc-800 text-white rounded-bl-md'
-              }`}
-            >
-              {message.content && (
-                <p className="whitespace-pre-wrap">{message.content}</p>
-              )}
-              {message.isGeneratingImage && (
-                <div className="flex items-center gap-2 mt-2">
-                  <Camera className="w-4 h-4 text-zinc-400 animate-spin" />
-                  <span className="text-sm text-zinc-400">{character.name}正在拍照...</span>
-                </div>
-              )}
-              {message.imageUrl && (
-                <img
-                  src={message.imageUrl}
-                  alt="character sent"
-                  className="mt-2 rounded-lg max-w-[250px] w-full"
-                />
+        <div className="p-4 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-zinc-500 py-20">
+              <p>开始和 {character.name} 聊天吧~</p>
+              {!isPro && remainingMessages <= 0 && (
+                <p className="text-amber-400 text-sm mt-2">对话次数已用完，请升级 Pro</p>
               )}
             </div>
-          </div>
-        ))}
+          )}
 
-        {isTextStreaming && (
-          <div className="flex justify-start">
-            <div className="bg-zinc-800 text-white rounded-2xl rounded-bl-md px-4 py-2">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" />
-                <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.1s]" />
-                <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[70%] rounded-2xl px-4 py-2 ${
+                  message.role === 'user'
+                    ? 'bg-amber-400 text-zinc-900 rounded-br-md'
+                    : 'bg-zinc-800 text-white rounded-bl-md'
+                }`}
+              >
+                {message.content && (
+                  <p className="whitespace-pre-wrap">{message.content}</p>
+                )}
+                {message.isGeneratingImage && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Camera className="w-4 h-4 text-zinc-400 animate-spin" />
+                    <span className="text-sm text-zinc-400">{character.name}正在拍照...</span>
+                  </div>
+                )}
+                {message.imageUrl && (
+                  <img
+                    src={message.imageUrl}
+                    alt="character sent"
+                    className="mt-2 rounded-lg max-w-[250px] w-full"
+                  />
+                )}
               </div>
             </div>
-          </div>
-        )}
+          ))}
 
-        <div ref={messagesEndRef} />
+          {isTextStreaming && (
+            <div className="flex justify-start">
+              <div className="bg-zinc-800 text-white rounded-2xl rounded-bl-md px-4 py-2">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" />
+                  <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.1s]" />
+                  <span className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
       </main>
 
       <footer className="p-4 bg-zinc-900 border-t border-zinc-800">
@@ -321,13 +351,13 @@ export function ChatPage({ character, userId }: ChatPageProps) {
             placeholder="发送消息..."
             className="flex-1 bg-zinc-800 border-zinc-700 text-white"
             maxLength={500}
-            disabled={isTextStreaming}
+            disabled={isTextStreaming || (!isPro && remainingMessages <= 0)}
           />
           <Button
             type="submit"
             size="icon"
             className="bg-amber-400 text-zinc-900 hover:bg-amber-500 shrink-0"
-            disabled={isTextStreaming || !input.trim()}
+            disabled={isTextStreaming || !input.trim() || (!isPro && remainingMessages <= 0)}
           >
             <Send className="w-5 h-5" />
           </Button>

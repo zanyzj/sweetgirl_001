@@ -29,5 +29,6 @@ export default async function ChatRoute({ params }: { params: { characterId: str
     redirect('/');
   }
 
-  return <ChatPage character={character} userId={session.user.id} />;
+  const isPro = userProfile[0]?.isPro || false;
+  return <ChatPage character={character} userId={session.user.id} isPro={isPro} />;
 }

@@ -1,6 +1,12 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { db } from "@/db";
+
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (process.env.NODE_ENV !== "production" && proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+}
 
 export const auth = betterAuth({
   database: drizzleAdapter(db as any, {
